@@ -66,17 +66,47 @@ def patch_code_serializer():
     
     # Add recursive function printer before the Deserialize function
     # This will iterate through constant pools to find all nested SharedFunctionInfo
+    # V8 12.8.374 API verified from chromium.googlesource.com:
+    # - BytecodeArray::constant_pool() returns Tagged<TrustedFixedArray>
+    # - TrustedFixedArray::get(i) returns Tagged<Object>
+    # - IsSharedFunctionInfo(obj) checks type
+    # - Cast<SharedFunctionInfo>(obj) casts to SFI
     recursive_printer = '''
 // View8: Recursive function to print all nested SharedFunctionInfo
+// V8 12.8.374 API - uses TrustedFixedArray for constant pool
+#include <set>
+
+static std::set<Address> printed_sfis;  // Track already-printed SFIs to avoid infinite recursion
+
 static void PrintAllSharedFunctionInfos(Isolate* isolate, Tagged<SharedFunctionInfo> sfi, std::ostream& os, int depth = 0) {
-  std::string indent(depth * 2, ' ');
-  os << indent << "; ====== SharedFunctionInfo (depth " << depth << ") ======\\n";
-  sfi->SharedFunctionInfoPrint(os);
-  os << std::flush;
+  // Avoid infinite recursion by tracking printed SFIs
+  Address sfi_addr = sfi.ptr();
+  if (printed_sfis.count(sfi_addr) > 0) {
+    return;
+  }
+  printed_sfis.insert(sfi_addr);
   
-  // Check if this SFI has bytecode with a constant pool
+  std::string indent(depth * 2, ' ');
+  os << "\\n" << indent << "; ====== SharedFunctionInfo (depth " << depth << ") ======\\n";
+  
+  // Print function name if available
+  if (sfi->HasSharedName()) {
+    os << indent << "; Name: ";
+    ShortPrint(sfi->Name(), os);
+    os << "\\n";
+  }
+  
+  // Print bytecode if available
   if (sfi->HasBytecodeArray()) {
     Tagged<BytecodeArray> bytecode = sfi->GetBytecodeArray(isolate);
+    os << indent << "; Bytecode length: " << bytecode->length() << "\\n";
+    
+    // Disassemble the bytecode
+    os << indent << "; --- Bytecode Disassembly ---\\n";
+    bytecode->Disassemble(os);
+    os << std::flush;
+    
+    // Get constant pool and iterate for nested functions
     Tagged<TrustedFixedArray> constant_pool = bytecode->constant_pool();
     int pool_length = constant_pool->length();
     
@@ -86,11 +116,15 @@ static void PrintAllSharedFunctionInfos(Isolate* isolate, Tagged<SharedFunctionI
     for (int i = 0; i < pool_length; i++) {
       Tagged<Object> entry = constant_pool->get(i);
       if (IsSharedFunctionInfo(entry)) {
-        os << indent << "; Found nested function at index " << i << "\\n";
+        os << indent << "; Found nested function at constant pool index " << i << "\\n";
         PrintAllSharedFunctionInfos(isolate, Cast<SharedFunctionInfo>(entry), os, depth + 1);
       }
     }
+  } else {
+    os << indent << "; (No bytecode - may be native or uncompiled)\\n";
   }
+  
+  os << indent << "; ====== End SharedFunctionInfo (depth " << depth << ") ======\\n";
 }
 
 '''    
@@ -102,9 +136,14 @@ static void PrintAllSharedFunctionInfos(Isolate* isolate, Tagged<SharedFunctionI
     
     # Replace the return statement to call our recursive printer
     old_return = 'return scope.CloseAndEscape(result);'
-    new_return = '''std::cout << "\\n; ===== V8DASM: Starting Bytecode Extraction =====\\n";
+    new_return = '''// View8: Clear tracking set and print all functions
+  printed_sfis.clear();
+  std::cout << "\\n; ===== V8DASM VIEW8: Starting Full Bytecode Extraction =====\\n";
+  std::cout << "; V8 Version: 12.8.374\\n";
+  std::cout << "; Recursively extracting all SharedFunctionInfo from constant pools...\\n";
   PrintAllSharedFunctionInfos(isolate, *result, std::cout, 0);
-  std::cout << "; ===== V8DASM: Extraction Complete =====\\n";
+  std::cout << "\\n; ===== V8DASM VIEW8: Extraction Complete =====\\n";
+  std::cout << "; Total functions extracted: " << printed_sfis.size() << "\\n";
   std::cout << std::flush;
 
   return scope.CloseAndEscape(result);'''
