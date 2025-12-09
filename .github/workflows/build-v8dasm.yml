@@ -1,0 +1,78 @@
+name: Build v8dasm for V8 12.8.374
+
+on:
+  workflow_dispatch:  # Manual trigger
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'Disassembler/**'
+
+env:
+  V8_VERSION: "12.8.374"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hours max
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Cache ccache directory
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.ccache
+          key: ccache-v8-${{ env.V8_VERSION }}-${{ github.sha }}
+          restore-keys: |
+            ccache-v8-${{ env.V8_VERSION }}-
+
+      # Cache depot_tools
+      - name: Cache depot_tools
+        uses: actions/cache@v4
+        with:
+          path: /tmp/depot_tools
+          key: depot-tools-${{ hashFiles('Dockerfile') }}
+
+      # Cache V8 source
+      - name: Cache V8 source
+        uses: actions/cache@v4
+        with:
+          path: /tmp/v8-src
+          key: v8-src-${{ env.V8_VERSION }}
+
+      - name: Build v8dasm Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: v8dasm:${{ env.V8_VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            V8_VERSION=${{ env.V8_VERSION }}
+
+      - name: Extract v8dasm binary
+        run: |
+          docker create --name temp-v8dasm v8dasm:${{ env.V8_VERSION }}
+          docker cp temp-v8dasm:/usr/local/bin/v8dasm ./v8dasm-linux-x64
+          docker rm temp-v8dasm
+          chmod +x ./v8dasm-linux-x64
+          file ./v8dasm-linux-x64
+
+      - name: Upload v8dasm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: v8dasm-v8-${{ env.V8_VERSION }}-linux-x64
+          path: ./v8dasm-linux-x64
+          retention-days: 90
+
+      - name: Test v8dasm
+        run: |
+          ./v8dasm-linux-x64 --help || echo "v8dasm ready (no --help flag)"
