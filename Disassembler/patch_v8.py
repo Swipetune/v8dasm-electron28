@@ -2,9 +2,13 @@
 """
 Patch V8 12.8.374 for View8 compatibility.
 Adapts the original View8 patch for V8 12.8.
+
+KEY INSIGHT: Nested functions are stored in FixedArray constant pools.
+We must recursively print FixedArray contents to see all SharedFunctionInfo.
 """
 
 import re
+import os
 
 def patch_objects_printer():
     """Add BytecodeArray disassembly to SharedFunctionInfoPrint"""
@@ -30,17 +34,17 @@ def patch_objects_printer():
             break
     
     if insert_idx:
-        # V8 12.8.374 API verified from source:
-        # - HasBytecodeArray() -> bool (DECL_GETTER, no params)
+        # V8 12.8.374 API:
+        # - HasBytecodeArray() -> bool
         # - GetActiveBytecodeArray(IsolateForSandbox) -> Tagged<BytecodeArray>
         # - BytecodeArray::Disassemble(std::ostream&) -> void
-        # - GetIsolateForSandbox(*this) is the correct way to get Isolate in V8 12.x
-        new_code = '''  os << "\\nStart BytecodeArray\\n";
+        new_code = '''  os << "\\n; === SharedFunctionInfo Bytecode ===\\n";
   if (HasBytecodeArray()) {
+    os << "; Function: " << Brief(Name()) << "\\n";
     GetActiveBytecodeArray(GetIsolateForSandbox(*this))->Disassemble(os);
+    os << std::flush;
   }
-  os << "\\nEnd BytecodeArray\\n";
-  os << std::flush;
+  os << "; === End SharedFunctionInfo ===\\n";
 '''
         lines.insert(insert_idx, new_code)
         with open(path, 'w') as f:
@@ -50,20 +54,66 @@ def patch_objects_printer():
         print(f"WARNING: Could not find insertion point in {path}")
 
 def patch_code_serializer():
-    """Add print on deserialize"""
+    """Add comprehensive print on deserialize - iterates constant pool for nested functions"""
     path = 'src/snapshot/code-serializer.cc'
     with open(path, 'r') as f:
         content = f.read()
     
-    correct_print = '''
-  std::cout << "\\nStart SharedFunctionInfo\\n";
-  result->SharedFunctionInfoPrint(std::cout);
-  std::cout << "\\nEnd SharedFunctionInfo\\n";
+    # Add include for iostream if not present
+    if '#include <iostream>' not in content:
+        content = '#include <iostream>\n' + content
+        print(f"  Added iostream include")
+    
+    # Add recursive function printer before the Deserialize function
+    # This will iterate through constant pools to find all nested SharedFunctionInfo
+    recursive_printer = '''
+// View8: Recursive function to print all nested SharedFunctionInfo
+static void PrintAllSharedFunctionInfos(Isolate* isolate, Tagged<SharedFunctionInfo> sfi, std::ostream& os, int depth = 0) {
+  std::string indent(depth * 2, ' ');
+  os << indent << "; ====== SharedFunctionInfo (depth " << depth << ") ======\\n";
+  sfi->SharedFunctionInfoPrint(os);
+  os << std::flush;
+  
+  // Check if this SFI has bytecode with a constant pool
+  if (sfi->HasBytecodeArray()) {
+    Tagged<BytecodeArray> bytecode = sfi->GetBytecodeArray(isolate);
+    Tagged<TrustedFixedArray> constant_pool = bytecode->constant_pool();
+    int pool_length = constant_pool->length();
+    
+    os << indent << "; Constant pool size: " << pool_length << "\\n";
+    
+    // Iterate through constant pool looking for nested SharedFunctionInfo
+    for (int i = 0; i < pool_length; i++) {
+      Tagged<Object> entry = constant_pool->get(i);
+      if (IsSharedFunctionInfo(entry)) {
+        os << indent << "; Found nested function at index " << i << "\\n";
+        PrintAllSharedFunctionInfos(isolate, Cast<SharedFunctionInfo>(entry), os, depth + 1);
+      }
+    }
+  }
+}
+
+'''    
+    # Insert before CodeSerializer::Deserialize function
+    deserialize_pattern = r'(MaybeDirectHandle<SharedFunctionInfo>\s+CodeSerializer::Deserialize\s*\()'
+    if re.search(deserialize_pattern, content):
+        content = re.sub(deserialize_pattern, recursive_printer + r'\1', content, count=1)
+        print(f"  Added recursive SharedFunctionInfo printer")
+    
+    # Replace the return statement to call our recursive printer
+    old_return = 'return scope.CloseAndEscape(result);'
+    new_return = '''std::cout << "\\n; ===== V8DASM: Starting Bytecode Extraction =====\\n";
+  PrintAllSharedFunctionInfos(isolate, *result, std::cout, 0);
+  std::cout << "; ===== V8DASM: Extraction Complete =====\\n";
   std::cout << std::flush;
 
   return scope.CloseAndEscape(result);'''
     
-    content = content.replace('return scope.CloseAndEscape(result);', correct_print)
+    if old_return in content:
+        content = content.replace(old_return, new_return, 1)  # Only replace first occurrence
+        print(f"  Replaced return statement with recursive printer call")
+    else:
+        print(f"  WARNING: Could not find return statement to replace")
     
     with open(path, 'w') as f:
         f.write(content)
@@ -137,52 +187,81 @@ def patch_string():
     print(f"Patched {path}")
 
 def patch_objects_cc():
-    """Add additional printing for arrays and SharedFunctionInfo in objects.cc
+    """Add additional printing for arrays in objects.cc using REGEX patterns
     
-    V8 12.x uses Cast<T>() instead of T::cast() - we need to handle both syntaxes.
-    These patches are optional - if the exact patterns don't match, we skip them
-    since the core SharedFunctionInfo bytecode printing is the critical part.
+    V8 12.x uses Cast<T>() instead of T::cast().
+    Use regex to be more flexible with whitespace and formatting.
     """
     path = 'src/objects/objects.cc'
+    
+    if not os.path.exists(path):
+        print(f"  WARNING: {path} not found, skipping objects.cc patches")
+        return
+        
     with open(path, 'r') as f:
         content = f.read()
     
     patched = False
     
-    # V8 12.x uses Cast<FixedArray>(*this) syntax
-    # Try V8 12.x syntax first
-    old_fixed_array_v12 = 'case FIXED_ARRAY_TYPE:\n      os << "<FixedArray[" << Cast<FixedArray>(*this).length() << "]>";\n      break;'
-    new_fixed_array_v12 = '''case FIXED_ARRAY_TYPE:
-      os << "<FixedArray[" << Cast<FixedArray>(*this).length() << "]>";
-      os << "\\nStart FixedArray\\n";
-      Cast<FixedArray>(*this)->FixedArrayPrint(os);
-      os << "\\nEnd FixedArray\\n";
-      break;'''
+    # Use regex to match FIXED_ARRAY_TYPE case with flexible whitespace
+    # Pattern matches: case FIXED_ARRAY_TYPE: ... break;
+    fixed_array_pattern = r'(case\s+FIXED_ARRAY_TYPE\s*:\s*\n\s*)(os\s*<<\s*"<FixedArray\["[^;]+;)(\s*\n\s*break;)'
     
-    if old_fixed_array_v12 in content:
-        content = content.replace(old_fixed_array_v12, new_fixed_array_v12)
-        print(f"  Patched FIXED_ARRAY_TYPE case (V8 12.x syntax)")
+    fixed_array_replacement = r'''\1\2
+      // View8: Print FixedArray contents for nested function discovery
+      {
+        auto arr = Cast<FixedArray>(*this);
+        int len = arr->length();
+        if (len > 0 && len < 1000) {  // Limit to avoid huge arrays
+          os << "\n; #region FixedArray Contents\n";
+          arr->FixedArrayPrint(os);
+          os << "; #endregion\n";
+        }
+      }\3'''
+    
+    new_content, count = re.subn(fixed_array_pattern, fixed_array_replacement, content)
+    if count > 0:
+        content = new_content
+        print(f"  Patched FIXED_ARRAY_TYPE case (regex match)")
         patched = True
     else:
-        # Try legacy syntax
-        old_fixed_array = 'case FIXED_ARRAY_TYPE:\n      os << "<FixedArray[" << FixedArray::cast(*this).length() << "]>";\n      break;'
-        new_fixed_array = '''case FIXED_ARRAY_TYPE:
-      os << "<FixedArray[" << FixedArray::cast(*this).length() << "]>";
-      os << "\\nStart FixedArray\\n";
-      FixedArray::cast(*this).FixedArrayPrint(os);
-      os << "\\nEnd FixedArray\\n";
-      break;'''
-        if old_fixed_array in content:
-            content = content.replace(old_fixed_array, new_fixed_array)
-            print(f"  Patched FIXED_ARRAY_TYPE case (legacy syntax)")
-            patched = True
+        # Fallback: Try to find and inject after FIXED_ARRAY_TYPE case
+        if 'case FIXED_ARRAY_TYPE:' in content:
+            # Find the case and inject code after the os << line
+            lines = content.split('\n')
+            new_lines = []
+            in_fixed_array_case = False
+            injected = False
+            
+            for i, line in enumerate(lines):
+                new_lines.append(line)
+                if 'case FIXED_ARRAY_TYPE:' in line:
+                    in_fixed_array_case = True
+                elif in_fixed_array_case and not injected:
+                    if 'os <<' in line and 'FixedArray' in line:
+                        # Inject after this line
+                        inject_code = '''      // View8: Print FixedArray contents
+      {
+        auto arr = Cast<FixedArray>(*this);
+        if (arr->length() > 0 && arr->length() < 500) {
+          os << "\\n; FixedArray contents:\\n";
+          arr->FixedArrayPrint(os);
+        }
+      }'''
+                        new_lines.append(inject_code)
+                        injected = True
+                        in_fixed_array_case = False
+                        print(f"  Injected FixedArray printing code (fallback)")
+                        patched = True
+            
+            content = '\n'.join(new_lines)
     
     if not patched:
-        print(f"  WARNING: Could not patch FIXED_ARRAY_TYPE - syntax may have changed")
+        print(f"  INFO: FIXED_ARRAY_TYPE patch skipped - will rely on recursive printer in code-serializer.cc")
     
     with open(path, 'w') as f:
         f.write(content)
-    print(f"Patched {path} (optional patches)")
+    print(f"Patched {path}")
 
 
 if __name__ == '__main__':

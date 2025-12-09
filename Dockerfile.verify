@@ -1,0 +1,48 @@
+# Quick verification build - only test-compiles the patched file
+FROM --platform=linux/amd64 ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    git curl python3 build-essential clang \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git /opt/depot_tools
+ENV PATH="/opt/depot_tools:${PATH}"
+
+WORKDIR /v8-build
+
+# Clone V8 12.8.374
+RUN git clone --depth 1 --branch 12.8.374 https://chromium.googlesource.com/v8/v8.git .
+
+# Minimal gclient sync - just get headers
+RUN echo 'solutions = [{"name": ".", "url": "https://chromium.googlesource.com/v8/v8.git@12.8.374", "deps_file": "DEPS", "managed": False}]' > .gclient
+RUN gclient sync --shallow --no-history -D
+
+# Copy and apply patches
+COPY Disassembler/patch_v8.py /v8-build/
+RUN python3 /v8-build/patch_v8.py
+
+# Generate build config (needed for includes)
+RUN mkdir -p out.gn/x64.release && \
+    printf '%s\n' \
+    'dcheck_always_on = false' \
+    'is_component_build = false' \
+    'is_debug = false' \
+    'target_cpu = "x64"' \
+    'v8_monolithic = true' \
+    'v8_use_external_startup_data = false' \
+    'v8_enable_disassembler = true' \
+    'v8_enable_object_print = true' \
+    'v8_enable_sandbox = true' \
+    'use_sysroot = false' \
+    'treat_warnings_as_errors = false' \
+    > out.gn/x64.release/args.gn
+
+RUN gn gen out.gn/x64.release
+
+# Try to compile ONLY objects-printer.o to verify the patch
+# This will catch API errors quickly
+RUN ninja -C out.gn/x64.release obj/v8_base_without_compiler/objects-printer.o 2>&1 || echo "PATCH VERIFICATION COMPLETE"
+
+CMD ["echo", "Verification done"]

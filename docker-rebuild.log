@@ -1,0 +1,91 @@
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 2.87kB done
+#1 WARN: FromPlatformFlagConstDisallowed: FROM --platform flag should not use constant value "linux/amd64" (line 3)
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/ubuntu:22.04
+#2 DONE 0.7s
+
+#3 [internal] load metadata for docker.io/library/ubuntu:22.04
+#3 DONE 0.7s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.0s
+
+#5 [final 1/3] FROM docker.io/library/ubuntu:22.04@sha256:104ae83764a5119017b8e8d6218fa0832b09df65aae7d5a6de29a85d813da2fb
+#5 resolve docker.io/library/ubuntu:22.04@sha256:104ae83764a5119017b8e8d6218fa0832b09df65aae7d5a6de29a85d813da2fb 0.0s done
+#5 DONE 0.0s
+
+#6 [final 2/3] RUN apt-get update && apt-get install -y libatomic1 && rm -rf /var/lib/apt/lists/*
+#6 CACHED
+
+#7 [v8-base 1/7] FROM docker.io/library/ubuntu:22.04@sha256:104ae83764a5119017b8e8d6218fa0832b09df65aae7d5a6de29a85d813da2fb
+#7 resolve docker.io/library/ubuntu:22.04@sha256:104ae83764a5119017b8e8d6218fa0832b09df65aae7d5a6de29a85d813da2fb 0.0s done
+#7 DONE 0.0s
+
+#8 [internal] load build context
+#8 transferring context: 121B done
+#8 DONE 0.0s
+
+#9 [v8-build 2/4] RUN gn gen out.gn/x64.release
+#9 CACHED
+
+#10 [v8-base 7/7] RUN gclient sync --shallow --no-history -D
+#10 CACHED
+
+#11 [v8-patched 2/3] COPY Disassembler/patch_v8.py /v8-build/
+#11 CACHED
+
+#12 [v8-base 6/7] RUN echo 'solutions = [{"name": ".", "url": "https://chromium.googlesource.com/v8/v8.git@12.8.374", "deps_file": "DEPS", "managed": False}]' > .gclient
+#12 CACHED
+
+#13 [v8-base 5/7] RUN git clone --depth 1 --branch 12.8.374 https://chromium.googlesource.com/v8/v8.git .
+#13 CACHED
+
+#14 [v8-base 2/7] RUN apt-get update && apt-get install -y     git curl python3 python3-pip pkg-config     build-essential clang lld ninja-build     libglib2.0-dev libatomic1 ccache     && rm -rf /var/lib/apt/lists/*
+#14 CACHED
+
+#15 [v8-build 1/4] RUN --mount=type=cache,target=/ccache     mkdir -p out.gn/x64.release &&     printf '%s\n'     'dcheck_always_on = false'     'is_component_build = false'     'is_debug = false'     'target_cpu = "x64"'     'use_custom_libcxx = false'     'v8_monolithic = true'     'v8_use_external_startup_data = false'     'v8_static_library = true'     'v8_enable_disassembler = true'     'v8_enable_object_print = true'     'v8_enable_pointer_compression = true'     'v8_enable_sandbox = true'     'use_sysroot = false'     'treat_warnings_as_errors = false'     'cc_wrapper = "ccache"'     > out.gn/x64.release/args.gn
+#15 CACHED
+
+#16 [v8-patched 1/3] COPY Disassembler/v8dasm.cpp /v8-build/
+#16 CACHED
+
+#17 [v8-base 3/7] RUN git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git /opt/depot_tools
+#17 CACHED
+
+#18 [v8-patched 3/3] RUN python3 /v8-build/patch_v8.py
+#18 CACHED
+
+#19 [v8-base 4/7] WORKDIR /v8-build
+#19 CACHED
+
+#20 [v8-build 3/4] RUN --mount=type=cache,target=/ccache     ninja -j8 -C out.gn/x64.release v8_monolith
+#20 CACHED
+
+#21 [v8-build 4/4] RUN clang++ v8dasm.cpp -g -std=c++20 -Iinclude     -Lout.gn/x64.release/obj     -lv8_libbase -lv8_libplatform -lv8_monolith     -lpthread -ldl -o v8dasm     -DV8_COMPRESS_POINTERS
+#21 DONE 14.9s
+
+#22 [final 3/3] COPY --from=v8-build /v8-build/v8dasm /usr/local/bin/
+#22 DONE 0.3s
+
+#23 exporting to image
+#23 exporting layers
+#23 exporting layers 1.2s done
+#23 exporting manifest sha256:381c4ca2dab866cf0e71b23d244a5272ffbf73efc3c3a365283243ef7964dfaf
+#23 exporting manifest sha256:381c4ca2dab866cf0e71b23d244a5272ffbf73efc3c3a365283243ef7964dfaf done
+#23 exporting config sha256:5b831e24f28557feced79b5f894cab5885477aa5c95761f77b441d9eed3ad2f7 done
+#23 exporting attestation manifest sha256:8e3cbb9c80995388282939f5054911889b035e32ef9926d53a1b1e0d35e44e75 0.0s done
+#23 exporting manifest list sha256:d12ea16bbc12a62a00b12bc94a579d724b5f48ed260ce4a9b37c22a17e9ebd19 done
+#23 naming to docker.io/library/view8-disasm:latest done
+#23 unpacking to docker.io/library/view8-disasm:latest
+#23 unpacking to docker.io/library/view8-disasm:latest 0.3s done
+#23 DONE 1.6s
+
+ [33m1 warning found (use docker --debug to expand):
+[0m - FromPlatformFlagConstDisallowed: FROM --platform flag should not use constant value "linux/amd64" (line 3)
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/dy8p3a2mycggc4vhh0ycrdv5y
