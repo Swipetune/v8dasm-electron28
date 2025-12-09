@@ -35,10 +35,8 @@ RUN gclient sync --shallow --no-history -D
 # --- Patches stage (changes more often) ---
 FROM v8-base AS v8-patched
 
-# Copy and apply patches
-COPY Disassembler/v8dasm.cpp /v8-build/
+# Copy and apply patches (only patch script needed here)
 COPY Disassembler/patch_v8.py /v8-build/
-
 RUN python3 /v8-build/patch_v8.py
 
 # --- Build stage ---
@@ -73,7 +71,8 @@ RUN --mount=type=cache,target=/ccache \
     ninja -j${NINJA_JOBS} -C out.gn/x64.release v8_monolith
 
 # Compile v8dasm with V8 12.x flags (requires C++20)
-# Must match V8 build flags: sandbox + pointer compression
+# COPY SOURCE HERE - so changes don't invalidate V8 build
+COPY Disassembler/v8dasm.cpp /v8-build/
 RUN clang++ v8dasm.cpp -g -std=c++20 -Iinclude \
     -Lout.gn/x64.release/obj \
     -lv8_libbase -lv8_libplatform -lv8_monolith \
