@@ -56,7 +56,8 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  V8::SetFlagsFromString("--no-lazy --no-flush-bytecode");
+  // Enable bytecode printing during compilation
+  V8::SetFlagsFromString("--no-lazy --no-flush-bytecode --print-bytecode --print-bytecode-filter=*");
 
   V8::InitializeICU();
   std::unique_ptr<Platform> platform = platform::NewDefaultPlatform();
