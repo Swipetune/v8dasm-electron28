@@ -22,36 +22,15 @@ def patch_objects_printer():
             lines[i] = '  // ' + line.lstrip()
             print(f"  Commented out PrintSourceCode at line {i+1}")
     
-    insert_idx = None
-    for i, line in enumerate(lines):
-        if 'void SharedFunctionInfo::SharedFunctionInfoPrint' in line:
-            brace_count = 0
-            for j in range(i, min(i + 100, len(lines))):
-                brace_count += lines[j].count('{') - lines[j].count('}')
-                if j > i and brace_count == 0:
-                    insert_idx = j
-                    break
-            break
-    
-    if insert_idx:
-        # V8 12.8.374 API:
-        # - HasBytecodeArray() -> bool
-        # - GetActiveBytecodeArray(IsolateForSandbox) -> Tagged<BytecodeArray>
-        # - BytecodeArray::Disassemble(std::ostream&) -> void
-        new_code = '''  os << "\\n; === SharedFunctionInfo Bytecode ===\\n";
-  if (HasBytecodeArray()) {
-    os << "; Function: " << Brief(Name()) << "\\n";
-    GetActiveBytecodeArray(GetIsolateForSandbox(*this))->Disassemble(os);
-    os << std::flush;
-  }
-  os << "; === End SharedFunctionInfo ===\\n";
-'''
-        lines.insert(insert_idx, new_code)
-        with open(path, 'w') as f:
-            f.writelines(lines)
-        print(f"Patched {path}")
-    else:
-        print(f"WARNING: Could not find insertion point in {path}")
+    # View8: We DO NOT inject Disassemble() here anymore because:
+    # 1. V8 12.x requires GetIsolateForSandbox(*this)
+    # 2. objects-printer.cc lacks the context/headers to resolve this
+    # 3. The recursive printer in code-serializer.cc handles extraction safely
+    print(f"  Skipped injecting Disassemble() into objects-printer.cc (unsafe context)")
+
+    with open(path, 'w') as f:
+        f.writelines(lines)
+    print(f"Patched {path} (commented out source print only)")
 
 def patch_code_serializer():
     """Add comprehensive print on deserialize - iterates constant pool for nested functions"""
