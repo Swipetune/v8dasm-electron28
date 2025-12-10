@@ -1,0 +1,35 @@
+# FAST v8dasm build - Uses pre-built V8 base image
+# Build time: ~10-20 minutes (vs 2.5 hours)
+#
+# Prerequisites: 
+# 1. Run build-v8-base.yml workflow ONCE to push base image
+# 2. Or use: docker pull ghcr.io/swipetune/v8dasm-electron28-v8-base:12.8.374
+
+ARG V8_BASE_IMAGE=ghcr.io/swipetune/v8dasm-electron28-v8-base:12.8.374
+FROM --platform=linux/amd64 ${V8_BASE_IMAGE} AS v8-base
+
+# --- Apply patches and rebuild only changed files ---
+FROM v8-base AS v8-patched
+
+# Copy and apply View8 patches
+COPY Disassembler/patch_v8.py /v8-build/
+RUN python3 /v8-build/patch_v8.py
+
+# Rebuild V8 - ninja only recompiles files affected by patches (~5-15 min)
+RUN ninja -j8 -C out.gn/x64.release v8_monolith
+
+# --- Compile v8dasm ---
+FROM v8-patched AS v8-build
+
+COPY Disassembler/v8dasm.cpp /v8-build/
+RUN clang++ v8dasm.cpp -g -std=c++20 -Iinclude \
+    -Lout.gn/x64.release/obj \
+    -lv8_libbase -lv8_libplatform -lv8_monolith \
+    -lpthread -ldl -o v8dasm \
+    -DV8_COMPRESS_POINTERS -DV8_ENABLE_SANDBOX
+
+# --- Final minimal image ---
+FROM ubuntu:22.04 AS final
+RUN apt-get update && apt-get install -y libatomic1 && rm -rf /var/lib/apt/lists/*
+COPY --from=v8-build /v8-build/v8dasm /usr/local/bin/
+CMD ["v8dasm"]
