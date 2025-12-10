@@ -108,14 +108,21 @@ static void PrintAllSharedFunctionInfos(Isolate* isolate, Tagged<SharedFunctionI
 
 '''    
     # Insert before CodeSerializer::Deserialize function
-    deserialize_pattern = r'(MaybeDirectHandle<SharedFunctionInfo>\s+CodeSerializer::Deserialize\s*\()'
+    # V8 12.8.374 uses MaybeHandle, not MaybeDirectHandle
+    deserialize_pattern = r'(MaybeHandle<SharedFunctionInfo>\s+CodeSerializer::Deserialize\s*\()'
+    printer_inserted = False
     if re.search(deserialize_pattern, content):
         content = re.sub(deserialize_pattern, recursive_printer + r'\1', content, count=1)
         print(f"  Added recursive SharedFunctionInfo printer")
+        printer_inserted = True
+    else:
+        print(f"  WARNING: Could not find CodeSerializer::Deserialize - skipping recursive printer injection")
     
     # Replace the return statement to call our recursive printer
-    old_return = 'return scope.CloseAndEscape(result);'
-    new_return = '''// View8: Clear tracking set and print all functions
+    # ONLY if we successfully inserted the function definition
+    if printer_inserted:
+        old_return = 'return scope.CloseAndEscape(result);'
+        new_return = '''// View8: Clear tracking set and print all functions
   printed_sfis.clear();
   std::cout << "\\n; ===== V8DASM VIEW8: Starting Full Bytecode Extraction =====\\n";
   std::cout << "; V8 Version: 12.8.374\\n";
@@ -126,12 +133,14 @@ static void PrintAllSharedFunctionInfos(Isolate* isolate, Tagged<SharedFunctionI
   std::cout << std::flush;
 
   return scope.CloseAndEscape(result);'''
-    
-    if old_return in content:
-        content = content.replace(old_return, new_return, 1)  # Only replace first occurrence
-        print(f"  Replaced return statement with recursive printer call")
+        
+        if old_return in content:
+            content = content.replace(old_return, new_return, 1)  # Only replace first occurrence
+            print(f"  Replaced return statement with recursive printer call")
+        else:
+            print(f"  WARNING: Could not find return statement to replace")
     else:
-        print(f"  WARNING: Could not find return statement to replace")
+        print(f"  Skipping return statement replacement (printer not inserted)")
     
     with open(path, 'w') as f:
         f.write(content)
