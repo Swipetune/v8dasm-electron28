@@ -57,7 +57,7 @@ RUN --mount=type=cache,target=/ccache \
     'v8_enable_disassembler = true' \
     'v8_enable_object_print = true' \
     'v8_enable_pointer_compression = true' \
-    'v8_enable_sandbox = false' \
+    'v8_enable_sandbox = true' \
     'use_sysroot = false' \
     'treat_warnings_as_errors = false' \
     'cc_wrapper = "ccache"' \

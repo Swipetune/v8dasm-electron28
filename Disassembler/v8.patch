@@ -15,7 +15,9 @@ index 5b546e29926..45d7b50b7f5 100644
    }
    os << "\n";
 +  os << "\nStart BytecodeArray\n";
-+  this->GetActiveBytecodeArray().Disassemble(os);
++  if (HasBytecodeArray()) {
++     GetActiveBytecodeArray(GetIsolateForSandbox(*this))->Disassemble(os);
++  }
 +  os << "\nEnd BytecodeArray\n";
 +  os << std::flush;
  }
