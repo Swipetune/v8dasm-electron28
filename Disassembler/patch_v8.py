@@ -112,7 +112,9 @@ static void PrintAllSharedFunctionInfos(Isolate* isolate, Tagged<SharedFunctionI
     deserialize_pattern = r'(MaybeHandle<SharedFunctionInfo>\s+CodeSerializer::Deserialize\s*\()'
     printer_inserted = False
     if re.search(deserialize_pattern, content):
-        content = re.sub(deserialize_pattern, recursive_printer + r'\1', content, count=1)
+        # CRITICAL: Use lambda to avoid re.sub processing backslash sequences in replacement string
+        # Without lambda, \n in recursive_printer becomes actual newlines, breaking C++ string literals
+        content = re.sub(deserialize_pattern, lambda m: recursive_printer + m.group(1), content, count=1)
         print(f"  Added recursive SharedFunctionInfo printer")
         printer_inserted = True
     else:
